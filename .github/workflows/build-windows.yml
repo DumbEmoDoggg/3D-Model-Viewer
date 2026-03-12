@@ -1,0 +1,52 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build executable with PyInstaller
+        run: |
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --name "3D-Model-Viewer" `
+            --hidden-import PyQt5.sip `
+            --hidden-import OpenGL.platform.win32 `
+            --hidden-import OpenGL.arrays.numpymodule `
+            --hidden-import trimesh.exchange.load `
+            --hidden-import trimesh.exchange.obj `
+            --hidden-import trimesh.exchange.stl `
+            --hidden-import trimesh.exchange.ply `
+            --hidden-import trimesh.exchange.gltf `
+            --hidden-import trimesh.exchange.off `
+            --hidden-import trimesh.exchange.three `
+            src/main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3D-Model-Viewer-Windows
+          path: dist/3D-Model-Viewer.exe
+          if-no-files-found: error
