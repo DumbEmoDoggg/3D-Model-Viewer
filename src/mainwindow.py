@@ -292,7 +292,7 @@ class MainWindow(QMainWindow):
             "About 3D Model Viewer",
             "<h2>3D Model Viewer</h2>"
             "<p>A cross-platform desktop viewer for common 3D model formats.</p>"
-            "<p><b>Supported formats:</b> OBJ, STL, PLY, GLTF/GLB, 3MF, OFF, DAE</p>"
+            "<p><b>Supported formats:</b> OBJ, STL, PLY, GLTF/GLB, 3MF, OFF, DAE, FBX</p>"
             "<p><b>Controls:</b><br>"
             "Left drag — orbit<br>"
             "Right drag — pan<br>"
