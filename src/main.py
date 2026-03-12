@@ -3,6 +3,12 @@
 import os
 import sys
 
+# When running as a frozen PyInstaller bundle on Windows, add the temp
+# extraction directory to the DLL search path so that native libraries
+# (e.g. the bundled assimp DLL used by pyassimp) can be located.
+if hasattr(sys, "_MEIPASS") and os.name == "nt":
+    os.add_dll_directory(sys._MEIPASS)
+
 # Ensure the src directory is on the path when running directly
 sys.path.insert(0, os.path.dirname(__file__))
 
