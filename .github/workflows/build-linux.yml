@@ -37,7 +37,8 @@ jobs:
             libxcb-render-util0 \
             libxcb-xkb1 \
             libxkbcommon-x11-0 \
-            libegl-mesa0
+            libegl-mesa0 \
+            libassimp5
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
@@ -58,6 +59,7 @@ jobs:
             --hidden-import trimesh.exchange.gltf \
             --hidden-import trimesh.exchange.off \
             --hidden-import trimesh.exchange.three \
+            --hidden-import pyassimp \
             src/main.py
 
       - name: Upload artifact

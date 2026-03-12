@@ -23,6 +23,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install system dependencies
+        run: choco install assimp --no-progress -y
+
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
 
@@ -43,6 +46,7 @@ jobs:
             --hidden-import trimesh.exchange.gltf `
             --hidden-import trimesh.exchange.off `
             --hidden-import trimesh.exchange.three `
+            --hidden-import pyassimp `
             src/main.py
 
       - name: Upload artifact
