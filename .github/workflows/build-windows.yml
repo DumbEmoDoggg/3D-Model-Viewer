@@ -24,13 +24,18 @@ jobs:
           python-version: "3.11"
 
       - name: Install system dependencies
-        run: choco install assimp --no-progress -y
+        run: |
+          vcpkg install assimp:x64-windows
+          $vcpkgBin = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $vcpkgBin
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
 
       - name: Build executable with PyInstaller
         run: |
+          $vcpkgBin = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\bin"
+          $assimpDll = (Get-ChildItem -Path $vcpkgBin -Filter "assimp*.dll" | Select-Object -First 1).FullName
           pyinstaller `
             --onefile `
             --windowed `
@@ -47,6 +52,7 @@ jobs:
             --hidden-import trimesh.exchange.off `
             --hidden-import trimesh.exchange.three `
             --hidden-import pyassimp `
+            --add-binary "${assimpDll};." `
             src/main.py
 
       - name: Upload artifact
