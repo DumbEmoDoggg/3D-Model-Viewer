@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libgl1-mesa-glx \
+            libgl1 \
             libglib2.0-0 \
             libxcb-xinerama0 \
             libxcb-icccm4 \
@@ -37,7 +37,7 @@ jobs:
             libxcb-render-util0 \
             libxcb-xkb1 \
             libxkbcommon-x11-0 \
-            libegl1-mesa
+            libegl-mesa0
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller
@@ -47,7 +47,7 @@ jobs:
           pyinstaller \
             --onefile \
             --name "3d-model-viewer" \
-            --add-data "src:src" \
+            --paths src \
             --hidden-import PyQt5.sip \
             --hidden-import OpenGL.platform.glx \
             --hidden-import OpenGL.arrays.numpymodule \

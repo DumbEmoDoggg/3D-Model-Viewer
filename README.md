@@ -10,6 +10,7 @@ A cross-platform desktop application for viewing common 3D model formats, built 
 - Toggleable **grid** and **XYZ axes**
 - Drag-and-drop file loading
 - Command-line file argument support
+- **Material system**: assign a PBR-lite material with base colour, normal map, smoothness and metallic maps
 
 ## Controls
 
@@ -23,6 +24,19 @@ A cross-platform desktop application for viewing common 3D model formats, built 
 | Solid shading | **S** |
 | Wireframe | **W** |
 | Solid + Wire overlay | **O** |
+
+## Material System
+
+Open **Material → Set Material…** to configure the mesh material:
+
+| Property | Description |
+|----------|-------------|
+| Base Color | Solid RGBA colour *or* a texture image (PNG, JPG, BMP, …) |
+| Normal Map | Tangent-space normal-map image (requires the model to have UV coordinates) |
+| Smoothness | Scalar value 0–1 *or* a greyscale texture (R channel) |
+| Metallic   | Scalar value 0–1 *or* a greyscale texture (R channel) |
+
+Use **Material → Clear Material** to revert to the default flat shading.
 
 ## Running from source
 
@@ -43,7 +57,7 @@ python src/main.py model.stl
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --name 3d-model-viewer src/main.py
+pyinstaller --onefile --paths src --name 3d-model-viewer src/main.py
 # executable at dist/3d-model-viewer
 ```
 
@@ -51,7 +65,7 @@ pyinstaller --onefile --name 3d-model-viewer src/main.py
 
 ```bat
 pip install pyinstaller
-pyinstaller --onefile --windowed --name 3D-Model-Viewer src\main.py
+pyinstaller --onefile --windowed --paths src --name 3D-Model-Viewer src\main.py
 # executable at dist\3D-Model-Viewer.exe
 ```
 

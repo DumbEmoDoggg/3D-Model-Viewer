@@ -32,6 +32,7 @@ jobs:
             --onefile `
             --windowed `
             --name "3D-Model-Viewer" `
+            --paths src `
             --hidden-import PyQt5.sip `
             --hidden-import OpenGL.platform.win32 `
             --hidden-import OpenGL.arrays.numpymodule `
