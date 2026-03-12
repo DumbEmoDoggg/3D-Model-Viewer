@@ -1,0 +1,68 @@
+name: Build Linux Executable
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-glx \
+            libglib2.0-0 \
+            libxcb-xinerama0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xkb1 \
+            libxkbcommon-x11-0 \
+            libegl1-mesa
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build executable with PyInstaller
+        run: |
+          pyinstaller \
+            --onefile \
+            --name "3d-model-viewer" \
+            --add-data "src:src" \
+            --hidden-import PyQt5.sip \
+            --hidden-import OpenGL.platform.glx \
+            --hidden-import OpenGL.arrays.numpymodule \
+            --hidden-import trimesh.exchange.load \
+            --hidden-import trimesh.exchange.obj \
+            --hidden-import trimesh.exchange.stl \
+            --hidden-import trimesh.exchange.ply \
+            --hidden-import trimesh.exchange.gltf \
+            --hidden-import trimesh.exchange.off \
+            --hidden-import trimesh.exchange.three \
+            src/main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3D-Model-Viewer-Linux
+          path: dist/3d-model-viewer
+          if-no-files-found: error
