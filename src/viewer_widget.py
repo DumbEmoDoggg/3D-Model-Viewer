@@ -275,9 +275,10 @@ void main() {
     }
 
     // ---- Blinn-Phong lighting (headlight at camera = eye-space origin) ----
-    vec3 L     = normalize(-v_pos_eye);   // direction to light (headlight)
-    vec3 V     = L;                       // same as view direction
-    vec3 H     = L;                       // half-way vector = L when L == V
+    // Camera is at (0,0,0) in eye space; the light is co-located with the camera.
+    vec3 L     = normalize(-v_pos_eye);   // direction to light
+    vec3 V     = normalize(-v_pos_eye);   // direction to viewer (same – headlight)
+    vec3 H     = normalize(L + V);        // half-way vector (= L since L == V)
 
     float NdotL = max(dot(N, L), 0.0);
     float NdotH = max(dot(N, H), 0.0);

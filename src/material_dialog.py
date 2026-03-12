@@ -18,8 +18,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QColorDialog,
 )
-from PyQt5.QtGui import QColor, QPixmap
-from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 
 from material import Material
 
@@ -28,13 +27,6 @@ _IMAGE_FILTER = (
     "Images (*.png *.jpg *.jpeg *.bmp *.tga *.tiff *.gif *.hdr);;"
     "All Files (*)"
 )
-
-
-def _color_pixmap(r: float, g: float, b: float, size: int = 20) -> QPixmap:
-    """Return a solid-colour QPixmap for use on a button."""
-    px = QPixmap(size, size)
-    px.fill(QColor(int(r * 255), int(g * 255), int(b * 255)))
-    return px
 
 
 class _TextureRow(QHBoxLayout):
@@ -135,12 +127,10 @@ class MaterialDialog(QDialog):
         grp = QGroupBox("Base Color")
         form = QFormLayout(grp)
 
-        # Colour picker button
+        # Colour picker button – background colour serves as the visual indicator
         r, g, b, _ = self._mat.base_color
         self._color_btn = QPushButton()
         self._color_btn.setFixedSize(40, 24)
-        self._color_btn.setIcon(self.style().standardIcon(0))  # placeholder
-        self._color_btn.setIconSize(self._color_btn.size())
         self._color_btn.setToolTip("Click to choose base colour")
         self._update_color_btn(r, g, b)
         self._color_btn.clicked.connect(self._pick_color)
@@ -204,10 +194,7 @@ class MaterialDialog(QDialog):
             self._update_color_btn(col.redF(), col.greenF(), col.blueF())
 
     def _update_color_btn(self, r: float, g: float, b: float):
-        px = _color_pixmap(r, g, b, 24)
-        self._color_btn.setIcon(self.style().standardIcon(0))  # clear first
-        self._color_btn.setIcon(px if not px.isNull() else self.style().standardIcon(0))
-        # Use stylesheet as a fallback that always works
+        # Use a stylesheet background colour as the colour swatch – always visible
         self._color_btn.setStyleSheet(
             f"background-color: rgb({int(r*255)},{int(g*255)},{int(b*255)});"
         )
