@@ -18,6 +18,7 @@ from PyQt5.QtGui import QIcon, QKeySequence
 
 from model_loader import FILE_FILTER, load_model
 from viewer_widget import ViewerWidget
+from material_dialog import MaterialDialog
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +149,19 @@ class MainWindow(QMainWindow):
         about_act.triggered.connect(self._on_about)
         help_menu.addAction(about_act)
 
+        # Material menu
+        mat_menu = menu.addMenu("&Material")
+
+        set_mat_act = QAction("&Set Material…", self)
+        set_mat_act.setStatusTip("Configure material: base colour, normal map, smoothness and metallic")
+        set_mat_act.triggered.connect(self._on_set_material)
+        mat_menu.addAction(set_mat_act)
+
+        clear_mat_act = QAction("&Clear Material", self)
+        clear_mat_act.setStatusTip("Remove material and revert to default rendering")
+        clear_mat_act.triggered.connect(self._on_clear_material)
+        mat_menu.addAction(clear_mat_act)
+
     def _build_toolbar(self):
         tb = QToolBar("Main Toolbar", self)
         tb.setMovable(False)
@@ -252,6 +266,21 @@ class MainWindow(QMainWindow):
         self._load_thread.errored.connect(on_error)
         self._load_thread.finished.connect(progress.close)
         self._load_thread.start()
+
+    # ------------------------------------------------------------------
+    # Material
+    # ------------------------------------------------------------------
+
+    def _on_set_material(self):
+        current = self._viewer.get_material()
+        dlg = MaterialDialog(self, current)
+        if dlg.exec_() == dlg.Accepted:
+            mat = dlg.get_material()
+            if mat is not None:
+                self._viewer.set_material(mat)
+
+    def _on_clear_material(self):
+        self._viewer.set_material(None)
 
     # ------------------------------------------------------------------
     # About dialog

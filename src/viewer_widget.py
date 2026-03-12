@@ -1,9 +1,11 @@
 """OpenGL 3-D viewer widget with orbit / pan / zoom controls."""
 
 import math
+from typing import Optional
 
 import numpy as np
 from OpenGL.GL import (
+    # --- legacy fixed-function (used for grid / axes / fallback mesh) ---
     GL_AMBIENT,
     GL_AMBIENT_AND_DIFFUSE,
     GL_COLOR_BUFFER_BIT,
@@ -52,9 +54,65 @@ from OpenGL.GL import (
     glMatrixMode,
     GL_PROJECTION,
     GL_MODELVIEW,
+    # --- shader pipeline ---
+    GL_VERTEX_SHADER,
+    GL_FRAGMENT_SHADER,
+    GL_COMPILE_STATUS,
+    GL_LINK_STATUS,
+    GL_FALSE,
+    GL_TRUE,
+    glCreateShader,
+    glCreateProgram,
+    glShaderSource,
+    glCompileShader,
+    glGetShaderiv,
+    glGetShaderInfoLog,
+    glAttachShader,
+    glBindAttribLocation,
+    glLinkProgram,
+    glGetProgramiv,
+    glGetProgramInfoLog,
+    glUseProgram,
+    glDeleteShader,
+    glGetUniformLocation,
+    glUniform1i,
+    glUniform1f,
+    glUniform4f,
+    glUniformMatrix3fv,
+    glUniformMatrix4fv,
+    glEnableVertexAttribArray,
+    glDisableVertexAttribArray,
+    glVertexAttribPointer,
+    # --- textures ---
+    GL_TEXTURE_2D,
+    GL_TEXTURE0,
+    GL_TEXTURE1,
+    GL_TEXTURE2,
+    GL_TEXTURE3,
+    GL_RGBA,
+    GL_UNSIGNED_BYTE,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T,
+    GL_LINEAR,
+    GL_LINEAR_MIPMAP_LINEAR,
+    GL_REPEAT,
+    GL_UNPACK_ALIGNMENT,
+    glGenTextures,
+    glBindTexture,
+    glTexImage2D,
+    glTexParameteri,
+    glDeleteTextures,
+    glActiveTexture,
+    glPixelStorei,
+    glGenerateMipmap,
 )
 from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QOpenGLWidget
+
+from material import Material
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +149,7 @@ def _look_at_matrix(eye, center, up) -> np.ndarray:
         # The requested up vector is parallel to the viewing direction (e.g., looking
         # straight up or down along Y).  Fall back to the world Z axis so the camera
         # still produces a valid orthonormal frame.  The camera in this application
-        # always orbits with elevation clamped to ±89° so this path is only reached
+        # always orbits with elevation clamped to +/-89 deg so this path is only reached
         # when the caller explicitly passes a degenerate up vector.
         up = np.array([0.0, 0.0, 1.0])
         s = np.cross(f, up)
@@ -109,6 +167,140 @@ def _look_at_matrix(eye, center, up) -> np.ndarray:
     # OpenGL expects column-major, so transpose before passing
     return m.T.astype(np.float32)
 
+
+# ---------------------------------------------------------------------------
+# GLSL shader sources
+# ---------------------------------------------------------------------------
+
+_VERT_SRC = """
+#version 120
+
+attribute vec3 a_position;
+attribute vec3 a_normal;
+attribute vec2 a_texcoord;
+attribute vec3 a_tangent;
+
+varying vec3 v_pos_eye;
+varying vec3 v_normal_eye;
+varying vec2 v_texcoord;
+varying vec3 v_tangent_eye;
+varying vec3 v_bitangent_eye;
+
+uniform mat4 u_mv;
+uniform mat4 u_mvp;
+uniform mat3 u_normal_mat;
+
+void main() {
+    vec4 pos_eye    = u_mv * vec4(a_position, 1.0);
+    v_pos_eye       = pos_eye.xyz;
+
+    vec3 N          = normalize(u_normal_mat * a_normal);
+    v_normal_eye    = N;
+    v_texcoord      = a_texcoord;
+
+    // Build tangent and bitangent in eye space for normal mapping
+    vec3 T          = normalize(u_normal_mat * a_tangent);
+    T               = normalize(T - dot(T, N) * N);   // re-orthogonalise
+    v_tangent_eye   = T;
+    v_bitangent_eye = cross(N, T);
+
+    gl_Position = u_mvp * vec4(a_position, 1.0);
+}
+"""
+
+_FRAG_SRC = """
+#version 120
+
+varying vec3 v_pos_eye;
+varying vec3 v_normal_eye;
+varying vec2 v_texcoord;
+varying vec3 v_tangent_eye;
+varying vec3 v_bitangent_eye;
+
+uniform sampler2D u_tex_base_color;
+uniform sampler2D u_tex_normal;
+uniform sampler2D u_tex_smoothness;
+uniform sampler2D u_tex_metallic;
+
+uniform vec4  u_base_color;
+uniform float u_smoothness_val;
+uniform float u_metallic_val;
+
+// 1 = use this texture, 0 = use scalar value
+uniform int u_use_tex_base_color;
+uniform int u_use_tex_normal;
+uniform int u_use_tex_smoothness;
+uniform int u_use_tex_metallic;
+
+// 1 = the mesh has valid UV texture coordinates
+uniform int u_has_uv;
+
+void main() {
+    // ---- base colour ----
+    vec4 albedo;
+    if (u_use_tex_base_color == 1 && u_has_uv == 1) {
+        albedo = texture2D(u_tex_base_color, v_texcoord);
+    } else {
+        albedo = u_base_color;
+    }
+
+    // ---- normal ----
+    vec3 N;
+    if (u_use_tex_normal == 1 && u_has_uv == 1) {
+        vec3 nm  = texture2D(u_tex_normal, v_texcoord).rgb * 2.0 - 1.0;
+        mat3 TBN = mat3(
+            normalize(v_tangent_eye),
+            normalize(v_bitangent_eye),
+            normalize(v_normal_eye)
+        );
+        N = normalize(TBN * nm);
+    } else {
+        N = normalize(v_normal_eye);
+    }
+
+    // ---- smoothness ----
+    float sm;
+    if (u_use_tex_smoothness == 1 && u_has_uv == 1) {
+        sm = texture2D(u_tex_smoothness, v_texcoord).r;
+    } else {
+        sm = u_smoothness_val;
+    }
+
+    // ---- metallic ----
+    float metal;
+    if (u_use_tex_metallic == 1 && u_has_uv == 1) {
+        metal = texture2D(u_tex_metallic, v_texcoord).r;
+    } else {
+        metal = u_metallic_val;
+    }
+
+    // ---- Blinn-Phong lighting (headlight at camera = eye-space origin) ----
+    vec3 L     = normalize(-v_pos_eye);   // direction to light (headlight)
+    vec3 V     = L;                       // same as view direction
+    vec3 H     = L;                       // half-way vector = L when L == V
+
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+
+    // Shininess derived from smoothness so that smooth=1 => sharp specular
+    float roughness = max(0.01, 1.0 - sm);
+    float shininess = max(1.0, 2.0 / (roughness * roughness) - 2.0);
+
+    // PBR-lite: F0 = lerp(0.04, albedo, metallic)
+    vec3 F0      = mix(vec3(0.04), albedo.rgb, metal);
+
+    vec3 ambient  = 0.25 * albedo.rgb;
+    vec3 diffuse  = 0.85 * NdotL * (1.0 - metal) * albedo.rgb;
+    vec3 specular = 0.50 * pow(NdotH, shininess) * F0;
+
+    gl_FragColor = vec4(ambient + diffuse + specular, albedo.a);
+}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Viewer widget
+# ---------------------------------------------------------------------------
 
 class ViewerWidget(QOpenGLWidget):
     """A QOpenGLWidget that renders a triangular mesh with orbit/pan/zoom controls.
@@ -144,6 +336,12 @@ class ViewerWidget(QOpenGLWidget):
         self.show_axes = True
         self.show_grid = True
 
+        # Material / shader state
+        self._material = None          # type: Optional[Material]
+        self._shader_program = None    # type: Optional[int]
+        self._shader_uniforms = {}     # type: dict
+        self._textures = {}            # role -> GL texture id
+
         self.setMinimumSize(400, 300)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAcceptDrops(True)
@@ -168,6 +366,8 @@ class ViewerWidget(QOpenGLWidget):
 
         glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, [0.4, 0.4, 0.4, 1.0])
         glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 40.0)
+
+        self._compile_shaders()
 
     def resizeGL(self, w, h):
         if h == 0:
@@ -212,7 +412,127 @@ class ViewerWidget(QOpenGLWidget):
             self._draw_axes()
 
         if self.mesh_data is not None:
-            self._draw_mesh()
+            self._draw_mesh(view)
+
+    # ------------------------------------------------------------------
+    # Shader compilation
+    # ------------------------------------------------------------------
+
+    def _compile_shaders(self):
+        """Compile and link the GLSL shader program.  Falls back silently."""
+        try:
+            vert = glCreateShader(GL_VERTEX_SHADER)
+            glShaderSource(vert, _VERT_SRC)
+            glCompileShader(vert)
+            if not glGetShaderiv(vert, GL_COMPILE_STATUS):
+                raise RuntimeError(
+                    "Vertex shader compile error:\n"
+                    + glGetShaderInfoLog(vert).decode(errors="replace")
+                )
+
+            frag = glCreateShader(GL_FRAGMENT_SHADER)
+            glShaderSource(frag, _FRAG_SRC)
+            glCompileShader(frag)
+            if not glGetShaderiv(frag, GL_COMPILE_STATUS):
+                raise RuntimeError(
+                    "Fragment shader compile error:\n"
+                    + glGetShaderInfoLog(frag).decode(errors="replace")
+                )
+
+            prog = glCreateProgram()
+            glAttachShader(prog, vert)
+            glAttachShader(prog, frag)
+
+            # Bind attribute locations before linking
+            glBindAttribLocation(prog, 0, "a_position")
+            glBindAttribLocation(prog, 1, "a_normal")
+            glBindAttribLocation(prog, 2, "a_texcoord")
+            glBindAttribLocation(prog, 3, "a_tangent")
+
+            glLinkProgram(prog)
+            if not glGetProgramiv(prog, GL_LINK_STATUS):
+                raise RuntimeError(
+                    "Shader link error:\n"
+                    + glGetProgramInfoLog(prog).decode(errors="replace")
+                )
+
+            glDeleteShader(vert)
+            glDeleteShader(frag)
+
+            self._shader_program = int(prog)
+            # Cache uniform locations
+            for name in (
+                "u_mv", "u_mvp", "u_normal_mat",
+                "u_tex_base_color", "u_tex_normal",
+                "u_tex_smoothness", "u_tex_metallic",
+                "u_base_color",
+                "u_smoothness_val", "u_metallic_val",
+                "u_use_tex_base_color", "u_use_tex_normal",
+                "u_use_tex_smoothness", "u_use_tex_metallic",
+                "u_has_uv",
+            ):
+                self._shader_uniforms[name] = glGetUniformLocation(prog, name)
+
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            print("[ViewerWidget] Shader init failed, using fixed-function: %s" % exc)
+            self._shader_program = None
+
+    # ------------------------------------------------------------------
+    # Texture management
+    # ------------------------------------------------------------------
+
+    def _upload_texture(self, path):
+        """Load *path* as an OpenGL texture and return its texture id."""
+        img = QImage(path)
+        if img.isNull():
+            raise ValueError("Cannot load image: %s" % path)
+        # Flip vertically – OpenGL's origin is bottom-left
+        img = img.convertToFormat(QImage.Format_RGBA8888).mirrored(False, True)
+        w, h = img.width(), img.height()
+        ptr = img.bits()
+        ptr.setsize(w * h * 4)
+        data = bytes(ptr)
+
+        tex_id = int(glGenTextures(1))
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
+            GL_RGBA, GL_UNSIGNED_BYTE, data,
+        )
+        glGenerateMipmap(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        return tex_id
+
+    def _clear_material_textures(self):
+        """Delete all uploaded material textures from GPU memory."""
+        for tex_id in self._textures.values():
+            try:
+                glDeleteTextures(1, [int(tex_id)])
+            except Exception:
+                pass
+        self._textures.clear()
+
+    def _upload_material_textures(self, mat):
+        """Upload all textures referenced in *mat* to the GPU."""
+        slots = {
+            "base_color":  mat.base_color_texture,
+            "normal":      mat.normal_map_texture,
+            "smoothness":  mat.smoothness_texture,
+            "metallic":    mat.metallic_texture,
+        }
+        for role, path in slots.items():
+            if path:
+                try:
+                    self._textures[role] = self._upload_texture(path)
+                except Exception as exc:
+                    print("[ViewerWidget] Cannot load texture '%s': %s" % (path, exc))
 
     # ------------------------------------------------------------------
     # Drawing helpers
@@ -257,7 +577,18 @@ class ViewerWidget(QOpenGLWidget):
         glLineWidth(1.0)
         glEnable(GL_LIGHTING)
 
-    def _draw_mesh(self):
+    def _draw_mesh(self, view):
+        """Dispatch to shader or fixed-function mesh rendering."""
+        if self._material is not None and self._shader_program is not None:
+            self._draw_mesh_material(view)
+        else:
+            self._draw_mesh_basic()
+
+    # ------------------------------------------------------------------
+    # Fixed-function mesh drawing (no material / fallback)
+    # ------------------------------------------------------------------
+
+    def _draw_mesh_basic(self):
         va = self.mesh_data["vertex_array"]
         na = self.mesh_data["normal_array"]
         n  = len(va)
@@ -302,10 +633,118 @@ class ViewerWidget(QOpenGLWidget):
                 glEnable(GL_LIGHTING)
 
     # ------------------------------------------------------------------
+    # Shader-based mesh drawing (with material)
+    # ------------------------------------------------------------------
+
+    def _draw_mesh_material(self, view):
+        """Render the mesh using GLSL shaders with the active material."""
+        md   = self.mesh_data
+        va   = md["vertex_array"]    # (N, 3) float32
+        na   = md["normal_array"]    # (N, 3) float32
+        uva  = md["uv_array"]        # (N, 2) float32
+        ta   = md["tangent_array"]   # (N, 3) float32
+        n    = len(va)
+        has_uv = int(md.get("has_uv", False))
+
+        mat = self._material
+
+        # Compute MVP: view @ proj gives the right GL column-major MVP
+        w = getattr(self, "_viewport_w", self.width())
+        h = getattr(self, "_viewport_h", self.height()) or 1
+        near = max(0.001, self.radius * self.NEAR_PLANE_FACTOR)
+        far  = self.radius * self.FAR_PLANE_FACTOR
+        proj = _perspective_matrix(45.0, w / h, near, far)
+        mvp  = np.ascontiguousarray(view @ proj, dtype=np.float32)
+
+        # Normal matrix: pass view[:3,:3] so GLSL receives the correct
+        # upper-left 3x3 of the math view matrix (V_math[:3,:3]).
+        normal_mat = np.ascontiguousarray(view[:3, :3].copy(), dtype=np.float32)
+
+        glUseProgram(self._shader_program)
+        u = self._shader_uniforms
+
+        glUniformMatrix4fv(u["u_mv"],         1, GL_FALSE, view)
+        glUniformMatrix4fv(u["u_mvp"],        1, GL_FALSE, mvp)
+        glUniformMatrix3fv(u["u_normal_mat"], 1, GL_FALSE, normal_mat)
+
+        # ---- material scalar uniforms ----
+        r, g, b, a = mat.base_color
+        glUniform4f(u["u_base_color"],     r, g, b, a)
+        glUniform1f(u["u_smoothness_val"], mat.smoothness)
+        glUniform1f(u["u_metallic_val"],   mat.metallic)
+        glUniform1i(u["u_has_uv"],         has_uv)
+
+        # ---- bind textures to units 0-3 ----
+        tex_slots = [
+            ("base_color", "u_tex_base_color", "u_use_tex_base_color", GL_TEXTURE0, 0),
+            ("normal",     "u_tex_normal",     "u_use_tex_normal",     GL_TEXTURE1, 1),
+            ("smoothness", "u_tex_smoothness", "u_use_tex_smoothness", GL_TEXTURE2, 2),
+            ("metallic",   "u_tex_metallic",   "u_use_tex_metallic",   GL_TEXTURE3, 3),
+        ]
+        for role, tex_uni, flag_uni, gl_unit, unit_idx in tex_slots:
+            glUniform1i(u[tex_uni], unit_idx)
+            if role in self._textures:
+                glActiveTexture(gl_unit)
+                glBindTexture(GL_TEXTURE_2D, self._textures[role])
+                glUniform1i(u[flag_uni], 1)
+            else:
+                glUniform1i(u[flag_uni], 0)
+
+        # ---- vertex attribute arrays ----
+        glDisable(GL_LIGHTING)
+        if self.show_wireframe:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, va)
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, na)
+        glEnableVertexAttribArray(2)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, uva)
+        glEnableVertexAttribArray(3)
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 0, ta)
+
+        glDrawArrays(GL_TRIANGLES, 0, n)
+
+        glDisableVertexAttribArray(0)
+        glDisableVertexAttribArray(1)
+        glDisableVertexAttribArray(2)
+        glDisableVertexAttribArray(3)
+
+        if self.show_wireframe:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
+        # Unbind textures
+        for _role, _tex_uni, _flag_uni, gl_unit, _unit_idx in tex_slots:
+            glActiveTexture(gl_unit)
+            glBindTexture(GL_TEXTURE_2D, 0)
+
+        glActiveTexture(GL_TEXTURE0)
+        glUseProgram(0)
+        glEnable(GL_LIGHTING)
+
+        # Wireframe overlay on top of shaded mesh
+        if self.show_overlay_wireframe:
+            glDisable(GL_LIGHTING)
+            glEnable(GL_POLYGON_OFFSET_FILL)
+            glPolygonOffset(1.0, 1.0)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+            glColor3f(0.15, 0.15, 0.15)
+            glLineWidth(0.8)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glVertexPointer(3, GL_FLOAT, 0, va)
+            glDrawArrays(GL_TRIANGLES, 0, n)
+            glDisableClientState(GL_VERTEX_ARRAY)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            glDisable(GL_POLYGON_OFFSET_FILL)
+            glLineWidth(1.0)
+            glEnable(GL_LIGHTING)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def load_model(self, mesh_data: dict):
+    def load_model(self, mesh_data):
         """Display *mesh_data* (as returned by model_loader.load_model)."""
         self.mesh_data = mesh_data
         self._fit_model()
@@ -321,23 +760,37 @@ class ViewerWidget(QOpenGLWidget):
             self.elevation = 30.0
         self.update()
 
-    def set_wireframe(self, enabled: bool):
+    def set_wireframe(self, enabled):
         self.show_wireframe = enabled
         self.show_overlay_wireframe = False
         self.update()
 
-    def set_overlay_wireframe(self, enabled: bool):
+    def set_overlay_wireframe(self, enabled):
         self.show_wireframe = False
         self.show_overlay_wireframe = enabled
         self.update()
 
-    def set_show_axes(self, enabled: bool):
+    def set_show_axes(self, enabled):
         self.show_axes = enabled
         self.update()
 
-    def set_show_grid(self, enabled: bool):
+    def set_show_grid(self, enabled):
         self.show_grid = enabled
         self.update()
+
+    def set_material(self, material):
+        """Apply (or clear) a material.  Pass *None* to revert to default rendering."""
+        self.makeCurrent()
+        self._clear_material_textures()
+        self._material = material
+        if material is not None:
+            self._upload_material_textures(material)
+        self.doneCurrent()
+        self.update()
+
+    def get_material(self):
+        """Return the currently active Material, or None."""
+        return self._material
 
     # ------------------------------------------------------------------
     # Mouse / keyboard / drag-drop events
